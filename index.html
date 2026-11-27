@@ -235,7 +235,13 @@
     }
 
     .trace-title { font-size: 12px; font-weight: 800; color: var(--muted); margin-bottom: 7px; }
-    #trace { font-size: 12px; color: var(--muted); line-height: 1.5; }
+    #trace {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+      white-space: pre-wrap;
+      font-family: Consolas, "Courier New", monospace;
+    }
     .error { color: #a33a34; font-weight: 700; }
 
     .flowchart-card {
@@ -446,7 +452,7 @@
         </div>
         <pre id="output">Hasil proses akan tampil di sini.</pre>
         <div class="trace">
-          <div class="trace-title">Informasi Proses</div>
+          <div class="trace-title">Cara Kerja dan Informasi Proses</div>
           <div id="trace">Pilih metode, masukkan teks dan kunci, lalu tekan Enkripsi atau Dekripsi.</div>
         </div>
       </div>
@@ -666,6 +672,139 @@
       return `${operation === "encrypt" ? "Enkripsi" : "Dekripsi"} ganda | Kunci 1: ${key1} | Kunci 2: ${key2} | Panjang: ${text.length}`;
     }
 
+    function formatMatrix(text, key) {
+      if (!key.length) return "";
+      const rows = [];
+      for (let i = 0; i < text.length; i += key.length) {
+        rows.push(text.slice(i, i + key.length));
+      }
+      const header = `Kolom : ${key.split("").map((_, i) => String(i + 1).padStart(3)).join("")}`;
+      const keyRow = `Kunci : ${key.split("").map(ch => ch.padStart(3)).join("")}`;
+      const matrixRows = rows.map((row, i) =>
+        `Baris ${i + 1}: ${row.split("").map(ch => ch.padStart(3)).join("")}`
+      );
+      return [header, keyRow, ...matrixRows].join("\n");
+    }
+
+    function myszkowskiWork(text, key, operation) {
+      if (operation === "decrypt") {
+        const heights = columnHeights(text.length, key.length);
+        const ranks = stableColumnOrder(key);
+        const groupMap = [];
+        const seen = new Set();
+
+        for (const item of ranks) {
+          if (seen.has(item.char)) continue;
+          seen.add(item.char);
+          groupMap.push({
+            char: item.char,
+            columns: ranks.filter(x => x.char === item.char).map(x => x.index)
+          });
+        }
+
+        return [
+          describeResult("myszkowski", operation, text, key, ""),
+          "",
+          "1. Susun urutan kelompok kunci:",
+          ...groupMap.map((rank, i) =>
+            `   ${i + 1}. '${rank.char}' -> kolom ${rank.columns.map(c => c + 1).join(", ")}`
+          ),
+          "",
+          "2. Tinggi matriks tiap kolom:",
+          key.split("").map((_, i) => `   Kolom ${i + 1}: ${heights[i]} karakter`).join("\n"),
+          "",
+          "3. Isi ciphertext ke kolom berdasarkan kelompok kunci.",
+          "4. Baca matriks baris demi baris untuk memperoleh plaintext.",
+          "",
+          "5. Matriks hasil:",
+          formatMatrix(myszkowskiDecrypt(text, key), key)
+        ].join("\n");
+      }
+
+      const padded = text;
+      const ranks = [];
+      const used = new Set();
+      const ordered = stableColumnOrder(key);
+      for (const item of ordered) {
+        if (used.has(item.char)) continue;
+        used.add(item.char);
+        ranks.push({
+          char: item.char,
+          columns: ordered.filter(x => x.char === item.char).map(x => x.index)
+        });
+      }
+
+      const result = myszkowskiEncrypt(padded, key).result;
+      return [
+        describeResult("myszkowski", operation, padded, key, ""),
+        "",
+        "1. Matriks plaintext:",
+        formatMatrix(padded, key),
+        "",
+        "2. Urutkan kunci beserta nomor kolom:",
+        ...ranks.map((rank, i) =>
+          `   ${i + 1}. '${rank.char}' -> kolom ${rank.columns.map(c => c + 1).join(", ")}${rank.columns.length > 1 ? " (dibaca bersama per baris)" : " (dibaca kolom)"}` 
+        ),
+        "",
+        "3. Gabungkan isi kolom sesuai urutan kunci:",
+        ...ranks.map(rank => {
+          const columns = rank.columns.map(c => c + 1).join(", ");
+          return `   '${rank.char}' (kolom ${columns})`;
+        }),
+        "",
+        `4. Hasil ciphertext:\n${result}`
+      ].join("\n");
+    }
+
+    function doubleWork(text, key1, key2, operation) {
+      if (operation === "decrypt") {
+        const roundOne = columnarDecrypt(text, key2);
+        const roundTwo = columnarDecrypt(roundOne, key1);
+        return [
+          describeResult("double", operation, text, key1, key2),
+          "",
+          "1. Dekripsi tahap pertama dengan kunci 2:",
+          `   Kunci 2: ${key2}`,
+          `   Urutan kolom: ${stableColumnOrder(key2).map(item => item.index + 1).join(" -> ")}`,
+          `   Hasil tahap 1: ${roundOne}`,
+          "",
+          "2. Dekripsi tahap kedua dengan kunci 1:",
+          `   Kunci 1: ${key1}`,
+          `   Urutan kolom: ${stableColumnOrder(key1).map(item => item.index + 1).join(" -> ")}`,
+          `   Hasil tahap 2: ${roundTwo}`,
+          "",
+          "3. Matriks plaintext:",
+          formatMatrix(roundTwo, key1),
+          "",
+          "4. Hasil akhir:",
+          roundTwo.replace(/@+$/, "")
+        ].join("\n");
+      }
+
+      const roundOne = columnarEncrypt(text, key1);
+      const roundTwo = columnarEncrypt(roundOne, key2);
+      return [
+        describeResult("double", operation, text, key1, key2),
+        "",
+        "Catatan: Hasil berikut dihitung dengan transposisi kolom biasa.",
+        "Hasil OAIN-AD-UA@@KURNVLT@ANK@TSI@ berasal dari metode Myszkowski.",
+        "",
+        "1. Enkripsi tahap pertama dengan kunci 1:",
+        `   Kunci 1: ${key1}`,
+        "   Matriks 1:",
+        formatMatrix(text, key1),
+        `   Urutan kolom: ${stableColumnOrder(key1).map(item => item.index + 1).join(" -> ")}`,
+        `   Hasil tahap 1: ${roundOne}`,
+        "",
+        "2. Enkripsi tahap kedua dengan kunci 2:",
+        `   Kunci 2: ${key2}`,
+        "   Matriks 2:",
+        formatMatrix(roundOne, key2),
+        `   Urutan kolom: ${stableColumnOrder(key2).map(item => item.index + 1).join(" -> ")}`,
+        `   Hasil ciphertext: ${roundTwo}`
+      ].join("\n");
+    }
+
     function renderFlowchart(method) {
       const flows = {
         myszkowski: {
@@ -766,12 +905,12 @@
         if (operation === "decrypt" && document.getElementById("usePadding").checked) {
           result = result.replace(/@+$/, "");
         }
+        traceEl.textContent = myszkowskiWork(text, key1, operation);
         if (operation === "encrypt" && typeof processed === "object") {
           const rankInfo = processed.ranks.map(rank => {
             const mode = rank.columns.length > 1 ? "per baris" : "per kolom";
             return `${rank.char}: kolom ${rank.columns.map(col => col + 1).join(", ")} (${mode})`;
           }).join(" | ");
-          traceEl.textContent = `${describeResult(selectedMethod, operation, text, key1, key2)}\nBaris: ${Math.ceil(text.length / key1.length)} | ${rankInfo}`;
           outputEl.textContent = formatResult(result) || "(hasil kosong)";
           return;
         }
@@ -785,10 +924,10 @@
         if (operation === "decrypt" && document.getElementById("usePadding").checked) {
           result = result.replace(/@+$/, "");
         }
+        traceEl.textContent = doubleWork(text, key1, key2, operation);
       }
 
       outputEl.textContent = formatResult(result) || "(hasil kosong)";
-      traceEl.textContent = describeResult(selectedMethod, operation, text, key1, key2);
     }
 
     document.querySelectorAll(".tab").forEach(tab => {
@@ -814,7 +953,7 @@
 
     textEl.value = "OKTAVIANUS LANDRI TUKAN";
     key1El.value = "ABRAHAM";
-    document.getElementById("ignoreSpaces").checked = true;
+    document.getElementById("ignoreSpaces").checked = false;
     document.getElementById("uppercase").checked = true;
     document.getElementById("usePadding").checked = true;
     selectedMethod = "myszkowski";
